@@ -1,6 +1,9 @@
 from arango import ArangoClient
 import pandas as pd
+import requests
 import json
+import csv
+import io
 
 class CLIMATE_API:
 
@@ -132,3 +135,43 @@ class CLIMATE_API:
         docs = json.loads(pd.Series(docs).to_json(orient='records'))
         countries_col.insert_many(docs)
         print(f"Inserted {len(docs)} country documents into ArangoDB.")
+
+    def load_border_data(self):
+        response = requests.get(
+            'https://raw.githubusercontent.com/geodatasource/country-borders/master/GEODATASOURCE-COUNTRY-BORDERS.CSV')
+        reader = csv.DictReader(io.StringIO(response.text))
+
+        if not self.db.has_collection('borders'):
+            self.db.create_collection('borders', edge=True)
+        else:
+            self.db.collection('borders').truncate()
+
+        if self.db.has_graph('climate_graph'):
+            self.db.delete_graph('climate_graph')
+        self.db.create_graph('climate_graph', edge_definitions=[{
+            'edge_collection': 'borders',
+            'from_vertex_collections': ['countries'],
+            'to_vertex_collections': ['countries']
+        }])
+
+        # Build ISO2 to _key mapping
+        iso2_to_key = {}
+        for doc in self.db.collection('countries').all():
+            if doc['iso2']:
+                iso2_to_key[doc['iso2']] = doc['_key']
+
+        # Insert edges (outside the for doc loop!)
+        borders_col = self.db.collection('borders')
+        edges = []
+        for row in reader:
+            from_code = row['country_code']
+            to_code = row['country_border_code']
+            if not to_code or from_code not in iso2_to_key or to_code not in iso2_to_key:
+                continue
+            edges.append({
+                '_from': f"countries/{iso2_to_key[from_code]}",
+                '_to': f"countries/{iso2_to_key[to_code]}"
+            })
+
+        borders_col.insert_many(edges)
+        print(f"Inserted {len(edges)} border edges into ArangoDB.")
