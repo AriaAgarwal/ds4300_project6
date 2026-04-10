@@ -445,6 +445,32 @@ def plot_threshold_watchlist(api, outfile="threshold_watchlist.png"):
     plt.close(fig)
     print(f"Saved {outfile}")
 
+def plot_climate_stress(api, outfile = "climate_stress.png"):
+    """Query 4: Horizonal bars of countires by climate stress score."""
+    df = api.climate_stress()
+    results = _df_records(df)
+    if not results:
+        print("plot_climate_stress: no rows from climate_stress.")
+        return
+    df_plot = pd.DataFrame(results).sort_values("stress_score",ascending=True)
+
+    countries = df_plot["country"].tolist()
+    scores = df_plot["stress_score"].tolist()
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    bars = ax.barh(countries, scores, color="#c0392b", edgecolor="grey", linewidth=0.5)
+
+    ax.set_xlabel("Climate Stress Score")
+    ax.set_title("Top Countries by Composite Climate Stress")
+
+    ax.grid(axis="x", linestyle="--", alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(outfile, dpi=150)
+    plt.close(fig)
+    print(f"Saved {outfile}")   
+
+
 
 def main():
     api = CLIMATE_API()
@@ -453,6 +479,7 @@ def main():
     plot_paris_threshold_timeline(api, top_n=30)
     plot_climate_injustice_bubble(api)
     plot_threshold_watchlist(api)
+    plot_climate_stress(api)
 
 
 if __name__ == "__main__":
