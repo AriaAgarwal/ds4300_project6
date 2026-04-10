@@ -468,3 +468,118 @@ class CLIMATE_API:
         """
             )
         return pd.DataFrame(rows)
+
+    def climate_stress(self):
+        """Top countries with the highest overall climate stress"""
+        rows = self.aql(
+        """
+        FOR c IN countries
+
+        LET risk = TO_NUMBER(c.inform_risk["climate-driven_inform_risk_indicator"]["2022"])
+        LET temp = TO_NUMBER(c.temperature_change["2022"])
+
+        LET disaster_total = SUM(
+            FOR d IN ATTRIBUTES(c.disasters, true)
+                FOR m IN ATTRIBUTES(c.disasters[d], true)
+                    LET val = TO_NUMBER(c.disasters[d][m]["2022"])
+                    FILTER val != null
+                    RETURN val
+        )
+
+        FILTER risk != null
+        FILTER temp != null
+        FILTER disaster_total != null AND disaster_total > 0
+
+        LET norm_disaster = LOG(disaster_total + 1)
+
+        LET stress_score = (risk * 0.5) + (temp * 0.3) + (norm_disaster * 0.2)
+
+        SORT stress_score DESC
+        LIMIT 20
+
+        RETURN {
+            country: c.country,
+            stress_score: ROUND(stress_score * 1000) / 1000
+        }
+        """
+            )
+        return pd.DataFrame(rows)
+    
+    def risk_clustering(self):
+        """Do the high-risk countries cluster geographically based on the bordering countries"""
+        rows = self.aql(
+        """
+        FOR c IN countries
+
+        LET risk = TO_NUMBER(c.inform_risk["climate-driven_inform_risk_indicator"]["2022"])
+        FILTER risk != null AND risk > 0
+
+        LET neighbors = (
+            FOR n IN 1..1 OUTBOUND c borders
+                LET neighbor_risk = TO_NUMBER(n.inform_risk["climate-driven_inform_risk_indicator"]["2022"])
+                FILTER neighbor_risk != null AND neighbor_risk > 0
+                RETURN neighbor_risk
+        )
+
+        LET avg_neighbor_risk = AVERAGE(neighbors)
+
+        FILTER avg_neighbor_risk != null
+
+        RETURN {
+            country: c.country,
+            risk: ROUND(risk * 100) / 100,
+            avg_neighbor_risk: ROUND(avg_neighbor_risk * 100) / 100,
+            num_neighbors: LENGTH(neighbors)
+        }
+    """
+        )
+        return pd.DataFrame(rows)
+    
+    def disaster_growth_high_risk(self):
+        """Which disaster types are increasing the fastest in high-risk countries"""
+        rows = self.aql(
+            """
+            FOR c IN countries
+
+            LET risk = TO_NUMBER(c.inform_risk["climate-driven_inform_risk_indicator"]["2022"])
+            FILTER risk != null AND risk >= 5
+
+            FOR disaster_type IN ATTRIBUTES(c.disasters, true)
+                FILTER disaster_type != "total"
+                LET early_avg = AVERAGE(
+                    FOR year IN ["2000", "2005"]
+                        LET yearly_sum = SUM(
+                            FOR m IN ATTRIBUTES(c.disasters[disaster_type], true)
+                                LET val = TO_NUMBER(c.disasters[disaster_type][m][year])
+                                FILTER val != null
+                                RETURN val
+                        )
+                        RETURN yearly_sum
+                )
+
+                LET recent_avg = AVERAGE(
+                    FOR year IN ["2018", "2022"]
+                        LET yearly_sum = SUM(
+                            FOR m IN ATTRIBUTES(c.disasters[disaster_type], true)
+                                LET val = TO_NUMBER(c.disasters[disaster_type][m][year])
+                                FILTER val != null
+                                RETURN val
+                        )
+                        RETURN yearly_sum
+                )
+
+                FILTER early_avg != null AND recent_avg != null
+
+                LET growth = recent_avg - early_avg
+
+                SORT growth DESC
+                LIMIT 50
+
+                RETURN {
+                    country: c.country,
+                    disaster_type: disaster_type,
+                    growth: ROUND(growth * 100) / 100
+                }
+        """
+        )
+        return pd.DataFrame(rows)
