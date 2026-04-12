@@ -421,8 +421,9 @@ def plot_climate_injustice_bubble(api, outfile="climate_injustice_bubble.png"):
     ]
     ax.legend(handles=legend_markers, loc="upper left", fontsize=9)
 
-    fig.tight_layout()
-    fig.savefig(outfile, dpi=150)
+    ax.margins(x=0.12, y=0.08)
+    fig.tight_layout(pad=1.4)
+    fig.savefig(outfile, dpi=150, bbox_inches="tight", pad_inches=0.2)
     plt.close(fig)
 
 
