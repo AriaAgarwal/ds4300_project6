@@ -9,14 +9,14 @@ class CLIMATE_API:
 
     def __init__(self):
         self.client = ArangoClient(hosts='http://localhost:8529')
-        sys_db = self.client.db('_system', username="", password="")
+        sys_db = self.client.db('_system', username="root", password="test")
 
        # Create database
         if not sys_db.has_database('climate_data'):
             sys_db.create_database('climate_data')
 
         # Connect to database
-        self.db = self.client.db('climate_data', username="", password="")
+        self.db = self.client.db('climate_data', username="root", password="test")
 
     def clean_climate_data(self):
         risk_df = pd.read_csv('risk.csv')
@@ -210,7 +210,7 @@ class CLIMATE_API:
         FOR country IN countries
         FILTER LENGTH(country.temperature_change) > 0
 
-        // ── Baseline: average anomaly 1961–1990 (pre-acceleration era) ──
+        // baseline: average anomaly 1961-1990
         LET baseline_avg = AVG(
             FOR y IN ["1961","1962","1963","1964","1965","1966","1967","1968","1969","1970",
                     "1971","1972","1973","1974","1975","1976","1977","1978","1979","1980",
@@ -220,7 +220,7 @@ class CLIMATE_API:
             RETURN v
         )
 
-        // ── Decade-by-decade average anomalies ──
+        // decade-by-decade average anomalies
         LET decade_avgs = (
             FOR d IN decades
             LET yr_int = TO_NUMBER(d)
@@ -241,7 +241,7 @@ class CLIMATE_API:
             }
         )
 
-        // ── First year crossing raw 1.5°C ──
+        // first year crossing raw 1.5°C
         LET crossing_1_5 = FIRST(
             FOR y IN all_years
             LET v = country.temperature_change[y]
@@ -250,7 +250,7 @@ class CLIMATE_API:
             RETURN { year: y, anomaly: ROUND(v * 100) / 100 }
         )
 
-        // ── First year crossing Paris-adjusted threshold (~1.1°C) ──
+        // first year crossing Paris-adjusted threshold (~1.1°C)
         LET crossing_paris = FIRST(
             FOR y IN all_years
             LET v = country.temperature_change[y]
@@ -259,7 +259,7 @@ class CLIMATE_API:
             RETURN { year: y, anomaly: ROUND(v * 100) / 100 }
         )
 
-        // ── Sustained crossing: 5-year rolling avg >= 1.5°C ──
+        // sustained crossing: 5-year rolling avg >= 1.5°C
         // (single-year spikes can be El Nino noise; sustained matters more)
         LET sustained_crossing = FIRST(
             FOR anchor IN all_years
@@ -281,7 +281,7 @@ class CLIMATE_API:
             }
         )
 
-        // ── Latest anomaly and total warming since 1961 ──
+        // latest anomaly and total warming since 1961
         LET latest = LAST(
             FOR y IN all_years
             LET v = country.temperature_change[y]
@@ -293,10 +293,10 @@ class CLIMATE_API:
             ? ROUND((latest.anomaly - baseline_avg) * 100) / 100
             : null
 
-        // ── INFORM risk score ──
+        // INFORM risk score
         LET risk = country.inform_risk.inform_risk_index["2022"]
 
-        // ── Distance from 1.5°C threshold (for countries not yet crossed) ──
+        // distance from 1.5°C threshold (for countries not yet crossed)
         LET distance_from_threshold = crossing_1_5 == null AND IS_NUMBER(latest.anomaly)
             ? ROUND((1.5 - latest.anomaly) * 100) / 100
             : null
@@ -310,28 +310,28 @@ class CLIMATE_API:
             country:                    country.country,
             iso3:                       country.iso3,
 
-            // Threshold crossings
+            // threshold crossings
             crossed_1_5_raw:            crossing_1_5 != null,
             first_crossed_year:         crossing_1_5 != null ? crossing_1_5.year : null,
             anomaly_at_crossing:        crossing_1_5 != null ? crossing_1_5.anomaly : null,
             sustained_crossing_year:    sustained_crossing != null ? sustained_crossing.year : null,
             sustained_crossing_avg:     sustained_crossing != null ? sustained_crossing.five_yr_avg : null,
 
-            // Paris-adjusted (1951-1980 baseline offset)
+            // paris-adjusted (1951-1980 baseline offset)
             crossed_paris_adjusted:     crossing_paris != null,
             paris_crossing_year:        crossing_paris != null ? crossing_paris.year : null,
 
-            // How close are non-crossers?
+            // how close are non-crossers
             degrees_from_threshold:     distance_from_threshold,
 
-            // Trend over time
+            // trend over time
             baseline_avg_1961_1990:     IS_NUMBER(baseline_avg) ? ROUND(baseline_avg * 100) / 100 : null,
             latest_year:                latest.year,
             latest_anomaly:             IS_NUMBER(latest.anomaly) ? ROUND(latest.anomaly * 100) / 100 : null,
             total_warming_since_1961:   total_warming,
             decade_by_decade:           decade_avgs,
 
-            // Vulnerability
+            // vulnerability
             inform_risk_score_2022:     IS_NUMBER(risk) ? ROUND(risk * 100) / 100 : null
         }
         """
@@ -340,7 +340,9 @@ class CLIMATE_API:
 
 
     def climate_injustice(self):
-        """Countries that crossed earliest AND have the highest INFORM risk (most vulnerable, least responsible)"""
+        """
+        Countries that crossed earliest and have the highest INFORM risk (most vulnerable, least responsible)
+        """
         rows = self.aql(
         """                   
         LET all_years = [
@@ -355,10 +357,11 @@ class CLIMATE_API:
 
         FOR country IN countries
         FILTER LENGTH(country.inform_risk) > 0
+                // high vulnerability countries
+                LET risk = country.inform_risk["climate-driven_inform_risk_indicator"]["2022"]
+                FILTER IS_NUMBER(risk) AND risk >= 5.0  
 
-                LET risk = country.inform_risk.inform_risk_index["2022"]
-                FILTER IS_NUMBER(risk) AND risk >= 5.0   // high vulnerability
-
+        // countries that have crossed 1.5°C
         LET crossing = FIRST(
             FOR y IN all_years
             LET v = country.temperature_change[y]
@@ -368,6 +371,7 @@ class CLIMATE_API:
         )
         FILTER crossing != null
 
+        // latest anomaly
         LET latest_anomaly = LAST(
             FOR y IN all_years
             LET v = country.temperature_change[y]
@@ -375,18 +379,18 @@ class CLIMATE_API:
             RETURN v
         )
 
-        // Total disasters since crossing year
+        // total disasters since crossing year
         LET disasters_since_crossing = SUM(
             FOR dtype IN ATTRIBUTES(country.disasters)
             LET d = country.disasters[dtype]
             RETURN SUM(
                 FOR y IN all_years
                 FILTER TO_NUMBER(y) >= TO_NUMBER(crossing.year)
-                LET v = d.number_of_events[y]
+                LET v = d.number_of_disasters[y]
                 RETURN IS_NUMBER(v) ? v : 0
             )
         )
-
+        // sort by crossing year ascending and risk descending
         SORT crossing.year ASC, risk DESC
         RETURN {
             country:                country.country,
@@ -396,7 +400,7 @@ class CLIMATE_API:
             current_anomaly:        ROUND(latest_anomaly * 100) / 100,
             inform_risk_2022:       ROUND(risk * 100) / 100,
             disasters_since_crossing: disasters_since_crossing,
-            // Years they've been above threshold — time under climate stress
+            // years they've been above threshold
             years_above_threshold:  2024 - TO_NUMBER(crossing.year)
         }
             """
@@ -405,7 +409,9 @@ class CLIMATE_API:
 
 
     def close_to_threshold(self):
-        """Countries closest to but not yet at 1.5°C"""
+        """
+        Countries closest to but not yet at 1.5°C
+        """
         rows = self.aql(
         """                     
         LET all_years_q3 = [
@@ -419,7 +425,7 @@ class CLIMATE_API:
         ]
 
         FOR country IN countries
-        // Confirm NOT yet crossed
+        // confirm not yet crossed
         LET has_crossed = LENGTH(
             FOR y IN all_years_q3
             LET v = country.temperature_change[y]
@@ -429,6 +435,7 @@ class CLIMATE_API:
         ) > 0
         FILTER !has_crossed
 
+        // latest anomaly
         LET latest_anomaly = LAST(
             FOR y IN all_years_q3
             LET v = country.temperature_change[y]
@@ -437,7 +444,7 @@ class CLIMATE_API:
         )
         FILTER IS_NUMBER(latest_anomaly) AND latest_anomaly >= 0.8
 
-        // Rate of warming: slope over last 20 years
+        // rate of warming
         LET recent_years = ["2004","2005","2006","2007","2008","2009","2010","2011",
                             "2012","2013","2014","2015","2016","2017","2018","2019",
                             "2020","2021","2022","2023"]
@@ -447,13 +454,15 @@ class CLIMATE_API:
             ? ROUND(((last_recent - first_recent) / 2.0) * 100) / 100
             : null
 
-        // Projected years until crossing at current rate
+        // projected years until crossing at current rate
         LET years_to_threshold = (IS_NUMBER(warming_rate_per_decade) AND warming_rate_per_decade > 0)
             ? ROUND(((1.5 - latest_anomaly) / (warming_rate_per_decade / 10)) * 10) / 10
             : null
 
-        LET risk = country.inform_risk.inform_risk_index["2022"]
+        // INFORM risk score
+        LET risk = country.inform_risk["climate-driven_inform_risk_indicator"]["2022"]
 
+        // sort by latest anomaly descending and limit to 25
         SORT latest_anomaly DESC
         LIMIT 25
         RETURN {
