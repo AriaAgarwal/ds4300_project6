@@ -470,12 +470,16 @@ class CLIMATE_API:
         return pd.DataFrame(rows)
 
     def climate_stress(self):
-        """Top countries with the highest overall climate stress"""
+        """Factors that drive climate stress in high-risk countries?"""
         rows = self.aql(
         """
         FOR c IN countries
 
-        LET risk = TO_NUMBER(c.inform_risk["climate-driven_inform_risk_indicator"]["2022"])
+        LET risk = TO_NUMBER(c.inform_risk.inform_risk_index["2022"])
+        LET vulnerability = TO_NUMBER(c.inform_risk.vulnerability["2022"])
+        LET hazard = TO_NUMBER(c.inform_risk.hazard_exposure["2022"])
+        LET coping = TO_NUMBER(c.inform_risk.lack_of_coping_capacity["2022"])
+
         LET temp = TO_NUMBER(c.temperature_change["2022"])
 
         LET disaster_total = SUM(
@@ -487,19 +491,30 @@ class CLIMATE_API:
         )
 
         FILTER risk != null
+        FILTER vulnerability != null
+        FILTER hazard != null
+        FILTER coping != null
         FILTER temp != null
         FILTER disaster_total != null AND disaster_total > 0
 
         LET norm_disaster = LOG(disaster_total + 1)
 
-        LET stress_score = (risk * 0.5) + (temp * 0.3) + (norm_disaster * 0.2)
+        LET stress_score =
+            (vulnerability * 0.2) +
+            (coping * 0.15) +
+            (temp * 0.1) +
+            (norm_disaster * 0.1)
 
         SORT stress_score DESC
         LIMIT 20
 
         RETURN {
             country: c.country,
-            stress_score: ROUND(stress_score * 1000) / 1000
+            stress_score: ROUND(stress_score * 1000) / 1000,
+            vulnerability: vulnerability,
+            coping: coping,
+            temperature: temp,
+            disasters: norm_disaster
         }
         """
             )
